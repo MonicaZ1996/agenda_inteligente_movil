@@ -110,6 +110,8 @@ app.post('/api/tareas', verificarAutenticacion, (req, res) => {
 });
 
 // Inicialización del servidor
-app.listen(PORT, () => {
-    console.log(`Servidor ejecutándose en http://localhost:${PORT}`);
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Servidor ejecutándose correctamente en http://0.0.0.0:${PORT}`);
 });
