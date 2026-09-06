@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import 'theme/app_theme.dart';
-import 'screens/tasks_screen.dart';
-
+import 'package:agenda_inteligente_movil/screens/offline_tasks_screen.dart';
+import 'package:agenda_inteligente_movil/theme/app_theme.dart';
 void main() {
   runApp(const MyApp());
 }
@@ -15,7 +14,7 @@ class MyApp extends StatelessWidget {
       title: 'Agenda Inteligente',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
-      home: const TasksScreen(),
+      home: const OfflineTasksScreen(),
     );
   }
 }
