@@ -28,11 +28,18 @@ class _OfflineTasksScreenState extends State<OfflineTasksScreen> {
 
   Future<void> _checkConnectivityAndLoad() async {
     final connectivityResult = await Connectivity().checkConnectivity();
-    _isOffline = connectivityResult.contains(ConnectivityResult.none);
+    final bool networkDisconnected =
+        connectivityResult.contains(ConnectivityResult.none);
 
-    if (!_isOffline) {
+    if (!networkDisconnected) {
       await _fetchRemoteTasks();
       await SyncService.processPendingQueue();
+    } else {
+      if (mounted) {
+        setState(() {
+          _isOffline = true;
+        });
+      }
     }
     await _loadLocalTasks();
   }
@@ -40,28 +47,53 @@ class _OfflineTasksScreenState extends State<OfflineTasksScreen> {
   Future<void> _fetchRemoteTasks() async {
     try {
       final response = await http
-          .get(Uri.parse('http://localhost:5000/api/tareas'))
+          .get(
+            Uri.parse('http://192.168.100.34:5000/api/tareas'),
+          )
           .timeout(const Duration(seconds: 4));
+
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
-        await DatabaseHelper.instance
-            .saveTasksBatch(data.cast<Map<String, dynamic>>());
+
+        await DatabaseHelper.instance.saveTasksBatch(
+          data.cast<Map<String, dynamic>>(),
+        );
+
+        if (mounted) {
+          setState(() {
+            _isOffline = false;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _isOffline = true;
+          });
+        }
       }
-    } catch (_) {
-      _isOffline = true;
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isOffline = true;
+        });
+      }
     }
   }
 
   Future<void> _loadLocalTasks() async {
     final localData = await DatabaseHelper.instance.getLocalTasks();
-    setState(() {
-      _tasks = localData;
-      if (localData.isNotEmpty &&
-          localData.first['last_updated_server'] != null) {
-        _lastSyncTime =
-            localData.first['last_updated_server'].toString().substring(0, 16);
-      }
-    });
+    if (mounted) {
+      setState(() {
+        _tasks = localData;
+        if (localData.isNotEmpty &&
+            localData.first['last_updated_server'] != null) {
+          _lastSyncTime = localData
+              .first['last_updated_server']
+              .toString()
+              .substring(0, 16);
+        }
+      });
+    }
   }
 
   Future<void> _addTaskOffline() async {
@@ -80,7 +112,7 @@ class _OfflineTasksScreenState extends State<OfflineTasksScreen> {
 
     await DatabaseHelper.instance.insertLocalTaskOffline(newTask);
     _taskController.clear();
-    await _loadLocalTasks();
+    await _checkConnectivityAndLoad();
   }
 
   Future<void> _logout() async {
@@ -111,72 +143,76 @@ class _OfflineTasksScreenState extends State<OfflineTasksScreen> {
           )
         ],
       ),
-      body: Column(
-        children: [
-          // Banner de estado de red y antigüedad de datos
-          Container(
-            color: _isOffline ? Colors.orange.shade100 : Colors.green.shade100,
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Icon(
-                  _isOffline ? Icons.wifi_off : Icons.wifi,
-                  color: _isOffline ? Colors.deepOrange : Colors.green,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    _isOffline
-                        ? 'Modo sin conexión | Datos de: $_lastSyncTime'
-                        : 'En línea | Sincronizado: $_lastSyncTime',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+      body: RefreshIndicator(
+        onRefresh: _checkConnectivityAndLoad,
+        child: Column(
+          children: [
+            // Banner de estado de red
+            Container(
+              color:
+                  _isOffline ? Colors.orange.shade100 : Colors.green.shade100,
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Icon(
+                    _isOffline ? Icons.wifi_off : Icons.wifi,
+                    color: _isOffline ? Colors.deepOrange : Colors.green,
                   ),
-                ),
-              ],
-            ),
-          ),
-          // Formulario de creación de tarea
-          Padding(
-            padding: const EdgeInsets.all(12.0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _taskController,
-                    decoration: const InputDecoration(
-                      labelText: 'Nueva tarea offline',
-                      border: OutlineInputBorder(),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _isOffline
+                          ? 'Modo sin conexión | Datos de: $_lastSyncTime'
+                          : 'En línea | Sincronizado: $_lastSyncTime',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: _addTaskOffline,
-                  child: const Text('Guardar'),
-                )
-              ],
+                ],
+              ),
             ),
-          ),
-          // Lista de tareas locales
-          Expanded(
-            child: ListView.builder(
-              itemCount: _tasks.length,
-              itemBuilder: (context, index) {
-                final item = _tasks[index];
-                final isSynced = item['is_synced'] == 1;
-
-                return ListTile(
-                  title: Text(item['title']),
-                  subtitle: Text(item['description'] ?? ''),
-                  trailing: Icon(
-                    isSynced ? Icons.cloud_done : Icons.cloud_upload,
-                    color: isSynced ? Colors.green : Colors.orange,
+            // Formulario de creación
+            Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _taskController,
+                      decoration: const InputDecoration(
+                        labelText: 'Nueva tarea offline',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
                   ),
-                );
-              },
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: _addTaskOffline,
+                    child: const Text('Guardar'),
+                  )
+                ],
+              ),
             ),
-          )
-        ],
+            // Lista de tareas locales
+            Expanded(
+              child: ListView.builder(
+                itemCount: _tasks.length,
+                itemBuilder: (context, index) {
+                  final item = _tasks[index];
+                  final isSynced = item['is_synced'] == 1;
+
+                  return ListTile(
+                    title: Text(item['title'] ?? ''),
+                    subtitle: Text(item['description'] ?? ''),
+                    trailing: Icon(
+                      isSynced ? Icons.cloud_done : Icons.cloud_upload,
+                      color: isSynced ? Colors.green : Colors.orange,
+                    ),
+                  );
+                },
+              ),
+            )
+          ],
+        ),
       ),
     );
   }

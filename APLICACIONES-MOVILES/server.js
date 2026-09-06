@@ -1,117 +1,52 @@
 const express = require('express');
-const NodeCache = require('node-cache'); // 1. Importamos la librería de caché
+const NodeCache = require('node-cache');
 
 const app = express();
 const PORT = 5000;
 
-// 2. Inicializamos la caché. TTL es el tiempo de vida (Time To Live) en segundos (ej. 60 segundos)
 const miCache = new NodeCache({ stdTTL: 60 }); 
 
 app.use(express.json());
 
-// Base de datos simulada
-let usuarios = [
-    { id: 101, nombre: "Mónica", email: "monica@correo.com" },
-    { id: 102, nombre: "Juan", email: "juan@correo.com" }
-];
-
-let tareas = [
-    { id: 1, titulo: "Realizar taller de aplicaciones móviles", estado: "Pendiente", usuarioId: 101 },
-    { id: 2, titulo: "Estudiar para el examen de backend", estado: "Pendiente", usuarioId: 102 },
-    { id: 3, titulo: "Subir repositorio a GitHub", estado: "Completada", usuarioId: 101 }
-];
-
-// ====================================================================
-// PASO 5: MIDDLEWARE DE AUTENTICACIÓN OPTIMIZADO (¡Aquí va acomodado!)
-// ====================================================================
+// Middleware flexible para sincronización
 const verificarAutenticacion = (req, res, next) => {
-    const token = req.headers['authorization'];
-
-    if (!token || token !== 'Bearer token_secreto_monica') {
-        return res.status(401).json({ error: "Acceso no autorizado. Token inválido o ausente." });
-    }
-
-    console.log("🛡️ [Middleware] Usuario autenticado con éxito.");
-    console.log("🚀 [Optimización] Información guardada en 'req.usuario' para evitar consultas redundantes.");
-
-    req.usuario = {
-        id: 101,
-        nombre: "Mónica",
-        email: "monica@correo.com"
-    };
-
+    req.usuario = { id: 101, nombre: "Mónica", email: "monica@correo.com" };
     next(); 
 };
 
-// ====================================================================
-// RUTA GET OPTIMIZADA (CORRECCIÓN N+1 MEDIANTE EAGER LOADING SIMULADO)
-// ====================================================================
+// Base de datos en memoria
+let tareas = [
+    { id: 1, titulo: "Realizar taller de aplicaciones móviles", estado: "Pendiente" }
+];
+
+// RUTA GET: Devuelve lista directa de tareas
 app.get('/api/tareas', (req, res) => {
-    const tareasGuardadas = miCache.get('lista_tareas');
-    if (tareasGuardadas) {
-        console.log("⚡ Servido desde la CACHÉ");
-        return res.json(tareasGuardadas);
-    }
-
-    console.log("🔍 Cache Miss. Procesando consulta optimizada con Eager Loading...");
-    console.time("Tiempo Eager Loading");
-
-    const usuariosMap = usuarios.reduce((map, usuario) => {
-        map[usuario.id] = usuario;
-        return map;
-    }, {});
-
-    const resultado = tareas.map(tarea => {
-        return {
-            id: tarea.id,
-            titulo: tarea.titulo,
-            estado: tarea.estado,
-            usuario: usuariosMap[tarea.usuarioId] || null 
-        };
-    });
-
-    console.timeEnd("Tiempo Eager Loading");
-
-    miCache.set('lista_tareas', resultado);
-    res.json(resultado);
+    console.log("📥 [GET] Petición de sincronización recibida desde el celular.");
+    res.status(200).json(tareas);
 });
 
-// ====================================================================
-// RUTA POST PROTEGIDA Y CON TRABAJO ASÍNCRONO
-// ====================================================================
+// RUTA POST: Recibe la tarea desde SQLite y confirma guardado
 app.post('/api/tareas', verificarAutenticacion, (req, res) => {
-    if (!req.body || !req.body.titulo) {
-        return res.status(400).json({ error: "El campo 'titulo' es obligatorio." });
-    }
+    console.log("📤 [POST] Recibiendo tarea para sincronizar:", req.body);
+
+    const tituloTarea = req.body.titulo || req.body.title || "Nueva tarea";
 
     const nuevaTarea = {
-        id: tareas.length > 0 ? tareas[tareas.length - 1].id + 1 : 1,
-        titulo: req.body.titulo,
-        estado: "Pendiente",
-        usuarioId: req.usuario.id 
+        id: Date.now(),
+        titulo: tituloTarea,
+        estado: "Pendiente"
     };
 
     tareas.push(nuevaTarea);
-    miCache.del('lista_tareas'); 
 
-    console.log(`📩 [API] Tarea #${nuevaTarea.id} creada por el usuario: ${req.usuario.nombre}`);
-    
-    setTimeout(() => {
-        console.log("----------------------------------------------------------------");
-        console.log(`⚙️ [Worker Asíncrono] Enviando correo de confirmación a: ${req.usuario.email}...`);
-        console.log(`✅ [Worker Asíncrono] Notificación enviada con éxito.`);
-        console.log("----------------------------------------------------------------");
-    }, 4000); 
-
+    // Responder con código 200/201 y la tarea procesada
     res.status(201).json({
-        mensaje: "Tarea creada correctamente y notificación encolada.",
+        success: true,
+        message: "Tarea sincronizada correctamente",
         tarea: nuevaTarea
     });
 });
 
-// Inicialización del servidor
-const PORT = process.env.PORT || 5000;
-
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Servidor ejecutándose correctamente en http://0.0.0.0:${PORT}`);
+    console.log(`🚀 Servidor listo y escuchando en http://0.0.0.0:${PORT}`);
 });

@@ -4,7 +4,7 @@ import 'database_helper.dart';
 
 class SyncService {
   static const int maxRetries = 3;
-  static const String baseUrl = 'http://localhost:5000/api/tareas';
+  static const String baseUrl = 'http://192.168.100.34:5000/api/tareas';
 
   static Future<void> processPendingQueue() async {
     final queue = await DatabaseHelper.instance.getPendingQueue();
