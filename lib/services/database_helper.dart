@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
@@ -9,7 +10,9 @@ class DatabaseHelper {
 
   Future<Database> get database async {
     if (_database != null) return _database!;
+
     _database = await _initDB('agenda_local.db');
+
     return _database!;
   }
 
@@ -25,7 +28,9 @@ class DatabaseHelper {
   }
 
   Future<void> _createDB(Database db, int version) async {
-    // Tabla de tareas locales
+    // ============================================================
+    // TABLA DE TAREAS LOCALES
+    // ============================================================
     await db.execute('''
       CREATE TABLE tasks (
         id TEXT PRIMARY KEY,
@@ -38,7 +43,9 @@ class DatabaseHelper {
       )
     ''');
 
-    // Tabla de cola de operaciones pendientes sin conexión
+    // ============================================================
+    // COLA DE OPERACIONES PENDIENTES
+    // ============================================================
     await db.execute('''
       CREATE TABLE pending_queue (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,67 +58,218 @@ class DatabaseHelper {
     ''');
   }
 
-  // Guardar batch de tareas del servidor
-  Future<void> saveTasksBatch(List<Map<String, dynamic>> tasks) async {
+  // ============================================================
+  // GUARDAR TAREAS QUE VIENEN DEL SERVIDOR
+  // ============================================================
+  Future<void> saveTasksBatch(
+    List<Map<String, dynamic>> tasks,
+  ) async {
     final db = await instance.database;
+
     final batch = db.batch();
-    for (var task in tasks) {
+
+    for (final task in tasks) {
       batch.insert(
         'tasks',
         {
           'id': task['id'].toString(),
-          'client_id': task['client_id'] ?? task['id'].toString(),
-          'title': task['titulo'] ?? task['nombre'] ?? '',
-          'description': task['descripcion'] ?? '',
-          'is_completed': (task['completada'] ?? false) == true ? 1 : 0,
-          'last_updated_server': task['updated_at'] ?? DateTime.now().toIso8601String(),
+
+          'client_id':
+              task['client_id']?.toString() ??
+              task['id'].toString(),
+
+          'title':
+              task['titulo']?.toString() ??
+              task['nombre']?.toString() ??
+              task['title']?.toString() ??
+              '',
+
+          'description':
+              task['descripcion']?.toString() ??
+              task['description']?.toString() ??
+              '',
+
+          'is_completed':
+              (task['completada'] ?? task['is_completed'] ?? false) == true
+                  ? 1
+                  : 0,
+
+          'last_updated_server':
+              task['updated_at']?.toString() ??
+              DateTime.now().toIso8601String(),
+
+          // Las tareas que vienen del servidor
+          // ya están sincronizadas.
           'is_synced': 1,
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
+
     await batch.commit(noResult: true);
   }
 
-  // Obtener tareas guardadas localmente
+  // ============================================================
+  // OBTENER TAREAS LOCALES
+  // ============================================================
   Future<List<Map<String, dynamic>>> getLocalTasks() async {
     final db = await instance.database;
-    return await db.query('tasks', orderBy: 'is_synced ASC, title ASC');
+
+    return await db.query(
+      'tasks',
+      orderBy: 'is_synced ASC, title ASC',
+    );
   }
 
-  // Insertar tarea en modo offline
-  Future<void> insertLocalTaskOffline(Map<String, dynamic> taskData) async {
+  // ============================================================
+  // INSERTAR TAREA CREADA SIN INTERNET
+  // ============================================================
+  Future<void> insertLocalTaskOffline(
+    Map<String, dynamic> taskData,
+  ) async {
     final db = await instance.database;
-    await db.insert('tasks', taskData);
-    await db.insert('pending_queue', {
-      'client_id': taskData['client_id'],
-      'operation': 'CREATE',
-      'payload': taskData['title'],
-      'retry_count': 0,
-      'created_at': DateTime.now().toIso8601String(),
-    });
+
+    // Copiamos los datos para no modificar
+    // directamente el mapa original.
+    final localTask = Map<String, dynamic>.from(taskData);
+
+    // Aseguramos que exista client_id.
+    if (localTask['client_id'] == null) {
+      localTask['client_id'] = localTask['id'].toString();
+    }
+
+    // La tarea todavía NO está sincronizada.
+    localTask['is_synced'] = 0;
+
+    // Valores por defecto.
+    localTask['is_completed'] =
+        localTask['is_completed'] ?? 0;
+
+    localTask['description'] =
+        localTask['description'] ?? '';
+
+    localTask['last_updated_server'] =
+        localTask['last_updated_server'] ??
+        DateTime.now().toIso8601String();
+
+    // ==========================================================
+    // GUARDAR TAREA LOCAL
+    // ==========================================================
+    await db.insert(
+      'tasks',
+      localTask,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+
+    // ==========================================================
+    // GUARDAR TODA LA INFORMACIÓN EN LA COLA
+    // ==========================================================
+    await db.insert(
+      'pending_queue',
+      {
+        'client_id': localTask['client_id'].toString(),
+
+        'operation': 'CREATE',
+
+        // Guardamos el objeto completo como JSON.
+        'payload': jsonEncode(localTask),
+
+        'retry_count': 0,
+
+        'created_at':
+            DateTime.now().toIso8601String(),
+      },
+    );
   }
 
-  // Obtener cola de pendientes
+  // ============================================================
+  // OBTENER COLA DE PENDIENTES
+  // ============================================================
   Future<List<Map<String, dynamic>>> getPendingQueue() async {
     final db = await instance.database;
-    return await db.query('pending_queue', orderBy: 'id ASC');
+
+    return await db.query(
+      'pending_queue',
+      orderBy: 'id ASC',
+    );
   }
 
+  // ============================================================
+  // MARCAR TAREA COMO SINCRONIZADA
+  // ============================================================
+  Future<void> markTaskAsSynced(
+    String clientId,
+  ) async {
+    final db = await instance.database;
+
+    await db.update(
+      'tasks',
+      {
+        'is_synced': 1,
+      },
+      where: 'client_id = ?',
+      whereArgs: [clientId],
+    );
+  }
+
+  // ============================================================
+  // MARCAR TAREA COMO NO SINCRONIZADA
+  // ============================================================
+  Future<void> markTaskAsPending(
+    String clientId,
+  ) async {
+    final db = await instance.database;
+
+    await db.update(
+      'tasks',
+      {
+        'is_synced': 0,
+      },
+      where: 'client_id = ?',
+      whereArgs: [clientId],
+    );
+  }
+
+  // ============================================================
+  // ELIMINAR ELEMENTO DE LA COLA
+  // ============================================================
   Future<void> removeQueueItem(int id) async {
     final db = await instance.database;
-    await db.delete('pending_queue', where: 'id = ?', whereArgs: [id]);
+
+    await db.delete(
+      'pending_queue',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
-  Future<void> incrementRetryCount(int id, int currentCount) async {
+  // ============================================================
+  // AUMENTAR CONTADOR DE INTENTOS
+  // ============================================================
+  Future<void> incrementRetryCount(
+    int id,
+    int currentCount,
+  ) async {
     final db = await instance.database;
-    await db.update('pending_queue', {'retry_count': currentCount + 1}, where: 'id = ?', whereArgs: [id]);
+
+    await db.update(
+      'pending_queue',
+      {
+        'retry_count': currentCount + 1,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
-  // Limpiar base de datos al cerrar sesión
+  // ============================================================
+  // LIMPIAR BASE DE DATOS AL CERRAR SESIÓN
+  // ============================================================
   Future<void> clearDatabase() async {
     final db = await instance.database;
+
     await db.delete('tasks');
     await db.delete('pending_queue');
   }
 }
+
