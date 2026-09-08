@@ -1,20 +1,69 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class SecureStorageService {
-  static const _storage = FlutterSecureStorage();
-  static const _keyToken = 'auth_token';
+  static const FlutterSecureStorage _storage =
+      FlutterSecureStorage();
 
-  // Guardar token cifrado
-  static Future<void> saveToken(String token) async {
-    await _storage.write(key: _keyToken, value: token);
+  static const String _accessTokenKey =
+      'access_token';
+
+  static const String _refreshTokenKey =
+      'refresh_token';
+
+  // ============================================================
+  // ACCESS TOKEN
+  // ============================================================
+
+  static Future<void> saveAccessToken(
+    String token,
+  ) async {
+    await _storage.write(
+      key: _accessTokenKey,
+      value: token,
+    );
   }
 
-  // Leer token
-  static Future<String?> getToken() async {
-    return await _storage.read(key: _keyToken);
+  static Future<String?> getAccessToken() async {
+    return await _storage.read(
+      key: _accessTokenKey,
+    );
   }
 
-  // Borrar credenciales al cerrar sesión
+  // ============================================================
+  // REFRESH TOKEN
+  // ============================================================
+
+  static Future<void> saveRefreshToken(
+    String token,
+  ) async {
+    await _storage.write(
+      key: _refreshTokenKey,
+      value: token,
+    );
+  }
+
+  static Future<String?> getRefreshToken() async {
+    return await _storage.read(
+      key: _refreshTokenKey,
+    );
+  }
+
+  // ============================================================
+  // GUARDAR AMBOS
+  // ============================================================
+
+  static Future<void> saveTokens({
+    required String accessToken,
+    required String refreshToken,
+  }) async {
+    await saveAccessToken(accessToken);
+    await saveRefreshToken(refreshToken);
+  }
+
+  // ============================================================
+  // LIMPIAR SESIÓN
+  // ============================================================
+
   static Future<void> clearAll() async {
     await _storage.deleteAll();
   }
