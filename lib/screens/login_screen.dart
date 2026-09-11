@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/repositories/auth_repository.dart';
+import 'auth_test_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -30,9 +31,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final password = _passwordController.text;
 
     if (email.isEmpty || password.isEmpty) {
-      _showMessage(
-        'Ingrese correo y contraseña',
-      );
+      _showMessage('Ingrese correo y contraseña');
       return;
     }
 
@@ -55,7 +54,7 @@ class _LoginScreenState extends State<LoginScreen> {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (_) => const _TemporaryHomeScreen(),
+          builder: (_) => const AuthTestScreen(),
         ),
       );
     } catch (e) {
@@ -92,8 +91,7 @@ class _LoginScreenState extends State<LoginScreen> {
         child: Center(
           child: SingleChildScrollView(
             child: Column(
-              crossAxisAlignment:
-                  CrossAxisAlignment.stretch,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const Icon(
                   Icons.calendar_month,
@@ -115,8 +113,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                 TextField(
                   controller: _emailController,
-                  keyboardType:
-                      TextInputType.emailAddress,
+                  keyboardType: TextInputType.emailAddress,
                   decoration: const InputDecoration(
                     labelText: 'Correo electrónico',
                     border: OutlineInputBorder(),
@@ -132,8 +129,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   decoration: InputDecoration(
                     labelText: 'Contraseña',
                     border: const OutlineInputBorder(),
-                    prefixIcon:
-                        const Icon(Icons.lock),
+                    prefixIcon: const Icon(Icons.lock),
                     suffixIcon: IconButton(
                       icon: Icon(
                         _obscurePassword
@@ -142,8 +138,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       onPressed: () {
                         setState(() {
-                          _obscurePassword =
-                              !_obscurePassword;
+                          _obscurePassword = !_obscurePassword;
                         });
                       },
                     ),
@@ -155,14 +150,12 @@ class _LoginScreenState extends State<LoginScreen> {
                 SizedBox(
                   height: 50,
                   child: ElevatedButton(
-                    onPressed:
-                        _loading ? null : _login,
+                    onPressed: _loading ? null : _login,
                     child: _loading
                         ? const SizedBox(
                             width: 24,
                             height: 24,
-                            child:
-                                CircularProgressIndicator(),
+                            child: CircularProgressIndicator(),
                           )
                         : const Text(
                             'INICIAR SESIÓN',
@@ -171,29 +164,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ],
             ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TemporaryHomeScreen extends StatelessWidget {
-  const _TemporaryHomeScreen();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          'Agenda Inteligente',
-        ),
-      ),
-      body: const Center(
-        child: Text(
-          'Sesión iniciada correctamente',
-          style: TextStyle(
-            fontSize: 20,
           ),
         ),
       ),
