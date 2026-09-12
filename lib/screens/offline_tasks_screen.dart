@@ -1,12 +1,13 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:uuid/uuid.dart';
-import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
 import '../services/database_helper.dart';
 import '../services/secure_storage_service.dart';
 import '../services/sync_service.dart';
+import '../core/network/dio_client.dart';
+import '../config/api_config.dart';
 
 class OfflineTasksScreen extends StatefulWidget {
   const OfflineTasksScreen({super.key});
@@ -16,12 +17,14 @@ class OfflineTasksScreen extends StatefulWidget {
       _OfflineTasksScreenState();
 }
 
-class _OfflineTasksScreenState extends State<OfflineTasksScreen> {
+class _OfflineTasksScreenState
+    extends State<OfflineTasksScreen> {
   List<Map<String, dynamic>> _tasks = [];
 
   bool _isOffline = false;
+  bool _isSyncing = false;
 
-  String _lastSyncTime = 'Sin datos';
+  String? _lastSyncTime;
 
   final TextEditingController _taskController =
       TextEditingController();
@@ -29,132 +32,83 @@ class _OfflineTasksScreenState extends State<OfflineTasksScreen> {
   StreamSubscription<List<ConnectivityResult>>?
       _connectivitySubscription;
 
-  bool _isSyncing = false;
-
   @override
-void initState() {
-  super.initState();
+  void initState() {
+    super.initState();
 
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    if (!mounted) return;
+    _checkConnectivityAndLoad();
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('PRUEBA: OfflineTasksScreen está funcionando'),
-        duration: Duration(seconds: 5),
-      ),
-    );
-  });
+    _connectivitySubscription =
+        Connectivity()
+            .onConnectivityChanged
+            .listen(_onConnectivityChanged);
+  }
 
-  _checkConnectivityAndLoad();
-
-  _connectivitySubscription =
-      Connectivity().onConnectivityChanged.listen(
-    (List<ConnectivityResult> results) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('CONECTIVIDAD DETECTADA: $results'),
-          duration: const Duration(seconds: 3),
-        ),
-      );
-
-      _onConnectivityChanged(results);
-    },
-  );
-}
   // ============================================================
   // DETECTAR CAMBIO DE CONECTIVIDAD
   // ============================================================
+
   Future<void> _onConnectivityChanged(
     List<ConnectivityResult> results,
   ) async {
-    debugPrint('🔵 CAMBIO DE CONECTIVIDAD DETECTADO: $results');
-    final bool networkDisconnected =
+    final bool offline =
         results.contains(ConnectivityResult.none);
 
-    if (networkDisconnected) {
-      if (mounted) {
-        setState(() {
-          _isOffline = true;
-        });
-      }
+    if (!mounted) return;
 
+    setState(() {
+      _isOffline = offline;
+    });
+
+    if (!offline) {
+      await _syncAndRefresh();
+    } else {
       await _loadLocalTasks();
-
-      return;
     }
-
-    // ==========================================================
-    // VOLVIÓ LA CONEXIÓN
-    // ==========================================================
-
-    if (mounted) {
-      setState(() {
-        _isOffline = false;
-      });
-    }
-
-    await _syncAndRefresh();
   }
 
   // ============================================================
   // COMPROBAR CONECTIVIDAD AL ABRIR LA PANTALLA
   // ============================================================
+
   Future<void> _checkConnectivityAndLoad() async {
-    final connectivityResult =
+    final results =
         await Connectivity().checkConnectivity();
 
-    final bool networkDisconnected =
-        connectivityResult.contains(ConnectivityResult.none);
+    final bool offline =
+        results.contains(ConnectivityResult.none);
 
-    if (networkDisconnected) {
-      if (mounted) {
-        setState(() {
-          _isOffline = true;
-        });
-      }
+    if (!mounted) return;
 
+    setState(() {
+      _isOffline = offline;
+    });
+
+    if (offline) {
       await _loadLocalTasks();
-      return;
+    } else {
+      await _syncAndRefresh();
     }
-
-    // Hay una conexión de red.
-    if (mounted) {
-      setState(() {
-        _isOffline = false;
-      });
-    }
-
-    await _syncAndRefresh();
   }
 
   // ============================================================
-  // SINCRONIZAR PENDIENTES Y ACTUALIZAR DATOS
+  // SINCRONIZAR Y ACTUALIZAR
   // ============================================================
+
   Future<void> _syncAndRefresh() async {
-    // Evitar dos sincronizaciones simultáneas.
-    if (_isSyncing) {
-      return;
-    }
+    if (_isSyncing) return;
 
     _isSyncing = true;
 
     try {
-      // --------------------------------------------------------
-      // PASO 1: PROCESAR TAREAS PENDIENTES
-      // --------------------------------------------------------
+      // Primero sincronizamos las tareas
+      // que quedaron pendientes offline.
       await SyncService.processPendingQueue();
 
-      // --------------------------------------------------------
-      // PASO 2: COMPROBAR QUE EL SERVIDOR ESTÁ DISPONIBLE
-      // --------------------------------------------------------
+      // Después obtenemos las tareas del servidor.
       await _fetchRemoteTasks();
 
-      // --------------------------------------------------------
-      // PASO 3: CARGAR LAS TAREAS LOCALES ACTUALIZADAS
-      // --------------------------------------------------------
+      // Finalmente cargamos las tareas locales.
       await _loadLocalTasks();
     } finally {
       _isSyncing = false;
@@ -164,42 +118,78 @@ void initState() {
   // ============================================================
   // OBTENER TAREAS DEL SERVIDOR
   // ============================================================
+
   Future<void> _fetchRemoteTasks() async {
     try {
-      final response = await http
-          .get(
-            Uri.parse(
-              'http://192.168.100.34:5000/api/tareas',
-            ),
-          )
-          .timeout(
-            const Duration(seconds: 4),
-          );
+      print('🌐 Consultando tareas al servidor...');
+
+      final response =
+          await DioClient.instance.dio.get(
+        ApiConfig.tasksEndpoint,
+      );
+
+      print(
+        '📥 Respuesta del servidor: '
+        '${response.statusCode}',
+      );
 
       if (response.statusCode == 200) {
-        final List<dynamic> data =
-            jsonDecode(response.body);
+        final data = response.data;
 
-        await DatabaseHelper.instance.saveTasksBatch(
-          data.cast<Map<String, dynamic>>(),
-        );
+        if (data is List) {
+          final List<Map<String, dynamic>> tasks =
+              data
+                  .whereType<Map>()
+                  .map(
+                    (item) =>
+                        Map<String, dynamic>.from(item),
+                  )
+                  .toList();
+
+          await DatabaseHelper.instance
+              .saveTasksBatch(tasks);
+
+          print(
+            '✅ ${tasks.length} tareas guardadas localmente.',
+          );
+        }
 
         if (mounted) {
           setState(() {
             _isOffline = false;
-            _lastSyncTime = _formatDateTime(
-              DateTime.now(),
-            );
+            _lastSyncTime =
+                _formatDateTime(DateTime.now());
           });
         }
       } else {
+        print(
+          '⚠️ El servidor respondió con código '
+          '${response.statusCode}',
+        );
+
         if (mounted) {
           setState(() {
             _isOffline = true;
           });
         }
       }
+    } on DioException catch (e) {
+      print(
+        '❌ Error obteniendo tareas: '
+        '${e.response?.statusCode} '
+        '${e.response?.data ?? e.message}',
+      );
+
+      if (mounted) {
+        setState(() {
+          _isOffline = true;
+        });
+      }
     } catch (e) {
+      print(
+        '❌ Error inesperado obteniendo tareas: $e',
+      );
+
       if (mounted) {
         setState(() {
           _isOffline = true;
@@ -209,146 +199,179 @@ void initState() {
   }
 
   // ============================================================
-  // CARGAR TAREAS LOCALES
+  // CARGAR TAREAS DESDE SQLITE
   // ============================================================
+
   Future<void> _loadLocalTasks() async {
-    final localData =
+    final tasks =
         await DatabaseHelper.instance.getLocalTasks();
 
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
 
     setState(() {
-      _tasks = localData;
-
-      // Buscar una fecha válida para mostrar.
-      for (final task in localData) {
-        final serverDate =
-            task['last_updated_server'];
-
-        if (serverDate != null &&
-            serverDate.toString().isNotEmpty) {
-          _lastSyncTime =
-              _formatDateTimeFromString(
-            serverDate.toString(),
-          );
-
-          break;
-        }
-      }
+      _tasks = tasks;
     });
+
+    if (tasks.isNotEmpty) {
+      final validTask = tasks.firstWhere(
+        (task) =>
+            task['last_updated_server'] != null,
+        orElse: () => <String, dynamic>{},
+      );
+
+      if (validTask.isNotEmpty) {
+        _lastSyncTime =
+            _formatDateTimeFromString(
+          validTask['last_updated_server'],
+        );
+      }
+    }
   }
 
   // ============================================================
-  // CREAR NUEVA TAREA
+  // CREAR TAREA OFFLINE
   // ============================================================
+
   Future<void> _addTaskOffline() async {
-    final title = _taskController.text.trim();
+    final title =
+        _taskController.text.trim();
 
     if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content:
+              Text('Escribe una tarea primero.'),
+        ),
+      );
       return;
     }
 
-    final clientId = const Uuid().v4();
+    final String clientId =
+        const Uuid().v4();
 
-    final newTask = {
+    final Map<String, dynamic> task = {
       'id': clientId,
       'client_id': clientId,
       'title': title,
-      'description': 'Creada sin conexión',
+      'description': '',
       'is_completed': 0,
+      'is_synced': 0,
       'last_updated_server':
           DateTime.now().toIso8601String(),
-      'is_synced': 0,
     };
 
-    // Guardar localmente como pendiente.
-    await DatabaseHelper.instance.insertLocalTaskOffline(
-      newTask,
-    );
+    try {
+      // Guardar localmente y colocar
+      // la operación en la cola.
+      await DatabaseHelper.instance
+          .insertLocalTaskOffline(task);
 
-    _taskController.clear();
+      _taskController.clear();
 
-    // Mostrar inmediatamente la nube naranja.
-    await _loadLocalTasks();
+      await _loadLocalTasks();
 
-    // Si tenemos conexión, intentar sincronizar.
-    final connectivityResult =
-        await Connectivity().checkConnectivity();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Tarea guardada localmente.',
+          ),
+        ),
+      );
 
-    final bool networkDisconnected =
-        connectivityResult.contains(ConnectivityResult.none);
+      // Comprobar si ya tenemos Internet.
+      final results =
+          await Connectivity().checkConnectivity();
 
-    if (!networkDisconnected) {
-      await _syncAndRefresh();
+      final bool offline =
+          results.contains(
+        ConnectivityResult.none,
+      );
+
+      if (!offline) {
+        await _syncAndRefresh();
+      }
+    } catch (e) {
+      print(
+        '❌ Error guardando tarea offline: $e',
+      );
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content:
+              Text('Error: $e'),
+        ),
+      );
     }
   }
 
   // ============================================================
   // CERRAR SESIÓN
   // ============================================================
+
   Future<void> _logout() async {
     await SecureStorageService.clearAll();
 
     await DatabaseHelper.instance.clearDatabase();
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Sesión cerrada y almacén local eliminado.',
-          ),
-        ),
-      );
+    if (!mounted) return;
 
-      setState(() {
-        _tasks = [];
-        _lastSyncTime = 'Limpiado';
-      });
-    }
+    setState(() {
+      _tasks = [];
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content:
+            Text('Sesión cerrada correctamente.'),
+      ),
+    );
   }
 
   // ============================================================
-  // FORMATEAR FECHA
+  // FORMATO DE FECHA
   // ============================================================
+
   String _formatDateTime(DateTime dateTime) {
-    final String year = dateTime.year.toString();
-
-    final String month =
-        dateTime.month.toString().padLeft(2, '0');
-
-    final String day =
+    final day =
         dateTime.day.toString().padLeft(2, '0');
 
-    final String hour =
+    final month =
+        dateTime.month.toString().padLeft(2, '0');
+
+    final year =
+        dateTime.year.toString();
+
+    final hour =
         dateTime.hour.toString().padLeft(2, '0');
 
-    final String minute =
+    final minute =
         dateTime.minute.toString().padLeft(2, '0');
 
-    return '$year-$month-$day $hour:$minute';
+    return '$day/$month/$year $hour:$minute';
   }
 
-  String _formatDateTimeFromString(String value) {
+  String _formatDateTimeFromString(
+    dynamic value,
+  ) {
     try {
-      final dateTime = DateTime.parse(value);
+      final date =
+          DateTime.parse(value.toString());
 
-      return _formatDateTime(dateTime);
-    } catch (e) {
-      return value.length >= 16
-          ? value.substring(0, 16)
-          : value;
+      return _formatDateTime(date);
+    } catch (_) {
+      return value.toString();
     }
   }
 
   // ============================================================
   // LIBERAR RECURSOS
   // ============================================================
+
   @override
   void dispose() {
     _connectivitySubscription?.cancel();
-
     _taskController.dispose();
 
     super.dispose();
@@ -357,144 +380,222 @@ void initState() {
   // ============================================================
   // INTERFAZ
   // ============================================================
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'Agenda Offline-First',
-        ),
+        title:
+            const Text('Tareas Offline'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.logout),
+            tooltip: 'Sincronizar',
+            icon:
+                const Icon(Icons.sync),
+            onPressed: _isSyncing
+                ? null
+                : _syncAndRefresh,
+          ),
+          IconButton(
+            tooltip: 'Cerrar sesión',
+            icon:
+                const Icon(Icons.logout),
             onPressed: _logout,
-            tooltip: 'Cerrar Sesión',
           ),
         ],
       ),
 
-      body: RefreshIndicator(
-        onRefresh: _checkConnectivityAndLoad,
+      body: Column(
+        children: [
+          // ==================================================
+          // INDICADOR DE CONEXIÓN
+          // ==================================================
 
-        child: Column(
-          children: [
-            // ==================================================
-            // BANNER DE ESTADO DE RED
-            // ==================================================
-            Container(
-              color: _isOffline
-                  ? Colors.orange.shade100
-                  : Colors.green.shade100,
-
-              padding: const EdgeInsets.all(12),
-
-              child: Row(
-                children: [
-                  Icon(
+          Container(
+            width: double.infinity,
+            padding:
+                const EdgeInsets.all(12),
+            color: _isOffline
+                ? Colors.orange.shade100
+                : Colors.green.shade100,
+            child: Row(
+              children: [
+                Icon(
+                  _isOffline
+                      ? Icons.cloud_off
+                      : Icons.cloud_done,
+                  color: _isOffline
+                      ? Colors.orange
+                      : Colors.green,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
                     _isOffline
-                        ? Icons.wifi_off
-                        : Icons.wifi,
-
-                    color: _isOffline
-                        ? Colors.deepOrange
-                        : Colors.green,
-                  ),
-
-                  const SizedBox(width: 8),
-
-                  Expanded(
-                    child: Text(
-                      _isOffline
-                          ? 'Modo sin conexión | Datos de: $_lastSyncTime'
-                          : 'En línea | Sincronizado: $_lastSyncTime',
-
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                      ),
+                        ? 'Modo sin conexión'
+                        : 'Conectado al servidor',
+                    style:
+                        const TextStyle(
+                      fontWeight:
+                          FontWeight.bold,
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
+          ),
 
-            // ==================================================
-            // FORMULARIO DE CREACIÓN
-            // ==================================================
+          // ==================================================
+          // ÚLTIMA SINCRONIZACIÓN
+          // ==================================================
+
+          if (_lastSyncTime != null)
             Padding(
-              padding: const EdgeInsets.all(12.0),
-
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _taskController,
-
-                      decoration:
-                          const InputDecoration(
-                        labelText:
-                            'Nueva tarea offline',
-
-                        border:
-                            OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(width: 8),
-
-                  ElevatedButton(
-                    onPressed: _addTaskOffline,
-
-                    child: const Text(
-                      'Guardar',
-                    ),
-                  ),
-                ],
+              padding:
+                  const EdgeInsets.all(8),
+              child: Text(
+                'Última sincronización: '
+                '$_lastSyncTime',
+                style:
+                    const TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey,
+                ),
               ),
             ),
 
-            // ==================================================
-            // LISTA DE TAREAS
-            // ==================================================
-            Expanded(
-              child: ListView.builder(
-                itemCount: _tasks.length,
+          // ==================================================
+          // CAMPO PARA CREAR TAREA
+          // ==================================================
 
-                itemBuilder: (
-                  context,
-                  index,
-                ) {
-                  final item = _tasks[index];
-
-                  final bool isSynced =
-                      item['is_synced'] == 1;
-
-                  return ListTile(
-                    title: Text(
-                      item['title'] ?? '',
+          Padding(
+            padding:
+                const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller:
+                        _taskController,
+                    decoration:
+                        const InputDecoration(
+                      labelText:
+                          'Nueva tarea',
+                      hintText:
+                          'Escribe una tarea',
+                      border:
+                          OutlineInputBorder(),
                     ),
-
-                    subtitle: Text(
-                      item['description'] ?? '',
-                    ),
-
-                    trailing: Icon(
-                      isSynced
-                          ? Icons.cloud_done
-                          : Icons.cloud_upload,
-
-                      color: isSynced
-                          ? Colors.green
-                          : Colors.orange,
-                    ),
-                  );
-                },
-              ),
+                    onSubmitted: (_) =>
+                        _addTaskOffline(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(
+                    Icons.add_circle,
+                    size: 40,
+                  ),
+                  onPressed:
+                      _addTaskOffline,
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+
+          // ==================================================
+          // LISTA DE TAREAS
+          // ==================================================
+
+          Expanded(
+            child: _tasks.isEmpty
+                ? const Center(
+                    child: Text(
+                      'No hay tareas guardadas.',
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount:
+                        _tasks.length,
+                    itemBuilder:
+                        (context, index) {
+                      final task =
+                          _tasks[index];
+
+                      final bool isSynced =
+                          task['is_synced'] ==
+                              1;
+
+                      final String title =
+                          task['title']
+                                  ?.toString() ??
+                              task['titulo']
+                                  ?.toString() ??
+                              'Tarea sin título';
+
+                      final String description =
+                          task['description']
+                                  ?.toString() ??
+                              task['descripcion']
+                                  ?.toString() ??
+                              '';
+
+                      return Card(
+                        margin:
+                            const EdgeInsets
+                                .symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        child: ListTile(
+                          leading: Icon(
+                            isSynced
+                                ? Icons
+                                    .cloud_done
+                                : Icons
+                                    .cloud_upload,
+                            color: isSynced
+                                ? Colors.green
+                                : Colors.orange,
+                          ),
+                          title:
+                              Text(title),
+                          subtitle:
+                              Text(
+                            description
+                                    .isEmpty
+                                ? 'Sin descripción'
+                                : description,
+                          ),
+                          trailing:
+                              isSynced
+                                  ? const Text(
+                                      'Sincronizada',
+                                      style:
+                                          TextStyle(
+                                        color:
+                                            Colors.green,
+                                        fontSize:
+                                            11,
+                                      ),
+                                    )
+                                  : const Text(
+                                      'Pendiente',
+                                      style:
+                                          TextStyle(
+                                        color:
+                                            Colors.orange,
+                                        fontSize:
+                                            11,
+                                      ),
+                                    ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }
 }
-

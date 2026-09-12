@@ -1,82 +1,189 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import '../components/task_card.dart';
 import '../components/state_display.dart';
 import '../theme/app_theme.dart';
+import '../data/repositories/task_repository.dart';
 
 class TasksScreen extends StatefulWidget {
   const TasksScreen({super.key});
 
   @override
-  State<TasksScreen> createState() => _TasksScreenState();
+  State<TasksScreen> createState() =>
+      _TasksScreenState();
 }
 
 class _TasksScreenState extends State<TasksScreen> {
-  DisplayStateEnum _state = DisplayStateEnum.loading;
-  List<dynamic> _tasks = [];
+  // ============================================================
+  // REPOSITORY
+  // ============================================================
+
+  final TaskRepository _repository =
+      TaskRepository();
+
+  // ============================================================
+  // ESTADO DE LA PANTALLA
+  // ============================================================
+
+  DisplayStateEnum _state =
+      DisplayStateEnum.loading;
+
+  List<Map<String, dynamic>> _tasks = [];
+
   String? _errorMessage;
+
+  // ============================================================
+  // INICIALIZAR
+  // ============================================================
 
   @override
   void initState() {
     super.initState();
+
     _fetchTasks();
   }
 
+  // ============================================================
+  // OBTENER TAREAS
+  // ============================================================
+
   Future<void> _fetchTasks() async {
+    if (!mounted) return;
+
     setState(() {
       _state = DisplayStateEnum.loading;
       _errorMessage = null;
     });
 
     try {
-      final response = await http.get(Uri.parse('http://localhost:5000/api/tareas'));
+      // El Repository se encarga de:
+      //
+      // 1. Intentar obtener las tareas desde el servidor.
+      // 2. Guardarlas en SQLite.
+      // 3. Si no hay conexión, utilizar las tareas locales.
+      final tasks =
+          await _repository.getTasks();
 
-      if (response.statusCode == 200) {
-        final List<dynamic> data = json.decode(response.body);
-        setState(() {
-          _tasks = data;
-          _state = data.isEmpty ? DisplayStateEnum.empty : DisplayStateEnum.content;
-        });
-      } else {
-        setState(() {
-          _errorMessage = 'Error del servidor: Status ${response.statusCode}';
-          _state = DisplayStateEnum.error;
-        });
-      }
-    } catch (e) {
+      if (!mounted) return;
+
       setState(() {
-        _errorMessage = 'No se pudo conectar a la API local.\n($e)';
+        _tasks = tasks;
+
+        _state = tasks.isEmpty
+            ? DisplayStateEnum.empty
+            : DisplayStateEnum.content;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _errorMessage =
+            'No se pudieron cargar las tareas.\n$e';
+
         _state = DisplayStateEnum.error;
       });
     }
   }
 
+  // ============================================================
+  // CONSTRUIR INTERFAZ
+  // ============================================================
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Agenda de Tareas'),
+        title:
+            const Text('Agenda de Tareas'),
+
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _fetchTasks,
-          )
+            icon:
+                const Icon(Icons.refresh),
+
+            tooltip:
+                'Actualizar tareas',
+
+            onPressed:
+                _fetchTasks,
+          ),
         ],
       ),
+
       body: StateDisplay(
         state: _state,
-        errorMessage: _errorMessage,
-        onRetry: _fetchTasks,
+
+        errorMessage:
+            _errorMessage,
+
+        onRetry:
+            _fetchTasks,
+
         child: ListView.builder(
-          padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
-          itemCount: _tasks.length,
-          itemBuilder: (context, index) {
-            final task = _tasks[index];
+          padding:
+              const EdgeInsets.symmetric(
+            vertical: AppSpacing.sm,
+          ),
+
+          itemCount:
+              _tasks.length,
+
+          itemBuilder:
+              (context, index) {
+            final task =
+                _tasks[index];
+
+            // --------------------------------------------------
+            // TÍTULO
+            // --------------------------------------------------
+
+            final String title =
+                task['titulo']
+                        ?.toString() ??
+                    task['nombre']
+                        ?.toString() ??
+                    task['title']
+                        ?.toString() ??
+                    'Tarea sin título';
+
+            // --------------------------------------------------
+            // DESCRIPCIÓN
+            // --------------------------------------------------
+
+            final String subtitle =
+                task['descripcion']
+                        ?.toString() ??
+                    task['description']
+                        ?.toString() ??
+                    'Sin descripción';
+
+            // --------------------------------------------------
+            // ESTADO COMPLETADA
+            // --------------------------------------------------
+
+            final dynamic completedValue =
+                task['completada'] ??
+                    task['is_completed'] ??
+                    false;
+
+            final bool isCompleted =
+                completedValue == true ||
+                completedValue == 1 ||
+                completedValue
+                        .toString()
+                        .toLowerCase() ==
+                    'true';
+
+            // --------------------------------------------------
+            // TARJETA
+            // --------------------------------------------------
+
             return TaskCard(
-              title: task['titulo'] ?? task['nombre'] ?? 'Tarea sin título',
-              subtitle: task['descripcion'] ?? 'Sin descripción',
-              isCompleted: task['completada'] ?? false,
+              title: title,
+
+              subtitle: subtitle,
+
+              isCompleted:
+                  isCompleted,
             );
           },
         ),

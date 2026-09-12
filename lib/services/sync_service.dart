@@ -1,12 +1,11 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
 import 'database_helper.dart';
+import '../core/network/dio_client.dart';
+import '../config/api_config.dart';
 
 class SyncService {
   static const int maxRetries = 3;
-
-  static const String baseUrl =
-      'http://192.168.100.34:5000/api/tareas';
 
   // ============================================================
   // PROCESAR COLA DE TAREAS PENDIENTES
@@ -50,10 +49,8 @@ class SyncService {
           taskData = jsonDecode(
             item['payload'].toString(),
           ) as Map<String, dynamic>;
-        } catch (e) {
-          // Si por alguna razón existe una tarea antigua
-          // cuyo payload solamente contiene el título,
-          // usamos ese valor como título.
+        } catch (_) {
+          // Compatibilidad con tareas antiguas.
           taskData = {
             'client_id': clientId,
             'titulo': item['payload'].toString(),
@@ -68,31 +65,31 @@ class SyncService {
         // PREPARAR DATOS PARA LA API
         // ======================================================
         final Map<String, dynamic> apiData = {
-  'client_id': taskData['client_id'].toString(),
+          'client_id':
+              taskData['client_id'].toString(),
 
-  'titulo':
-      taskData['titulo'] ??
-      taskData['title'] ??
-      '',
+          'titulo':
+              taskData['titulo'] ??
+              taskData['title'] ??
+              '',
 
-  'descripcion':
-      taskData['descripcion'] ??
-      taskData['description'] ??
-      '',
+          'descripcion':
+              taskData['descripcion'] ??
+              taskData['description'] ??
+              '',
 
-  'completada':
-      taskData['completada'] ??
-      (taskData['is_completed'] == 1),
-};
+          'completada':
+              taskData['completada'] ??
+              (taskData['is_completed'] == 1),
+        };
+
         // ======================================================
-        // ENVIAR TAREA AL SERVIDOR
+        // ENVIAR TAREA USANDO DIO
         // ======================================================
-        final response = await http.post(
-          Uri.parse(baseUrl),
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: jsonEncode(apiData),
+        final response =
+            await DioClient.instance.dio.post(
+          ApiConfig.tasksEndpoint,
+          data: apiData,
         );
 
         // ======================================================
@@ -100,21 +97,22 @@ class SyncService {
         // ======================================================
         if (response.statusCode == 200 ||
             response.statusCode == 201) {
-          // PRIMERO marcar la tarea local como sincronizada.
+
+          // Mostrar en consola la respuesta del servidor.
+          print(
+            '✅ TAREA SINCRONIZADA: ${response.data}',
+          );
+
+          // Marcar la tarea local como sincronizada.
           await DatabaseHelper.instance.markTaskAsSynced(
             clientId,
           );
 
-          // DESPUÉS eliminarla de la cola.
+          // Eliminar de la cola.
           await DatabaseHelper.instance.removeQueueItem(
             queueId,
           );
-        }
-
-        // ======================================================
-        // ERROR DEL SERVIDOR
-        // ======================================================
-        else {
+        } else {
           await DatabaseHelper.instance.incrementRetryCount(
             queueId,
             retries,
@@ -123,9 +121,29 @@ class SyncService {
       }
 
       // ========================================================
-      // ERROR DE CONEXIÓN
+      // ERROR DE DIO / CONEXIÓN / SERVIDOR
+      // ========================================================
+      on DioException catch (e) {
+        print(
+          '❌ Error sincronizando tarea: '
+          '${e.response?.statusCode} '
+          '${e.response?.data ?? e.message}',
+        );
+
+        await DatabaseHelper.instance.incrementRetryCount(
+          queueId,
+          retries,
+        );
+      }
+
+      // ========================================================
+      // OTROS ERRORES
       // ========================================================
       catch (e) {
+        print(
+          '❌ Error inesperado sincronizando tarea: $e',
+        );
+
         await DatabaseHelper.instance.incrementRetryCount(
           queueId,
           retries,
