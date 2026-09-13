@@ -2,11 +2,13 @@ import 'package:dio/dio.dart';
 
 import '../../../core/network/dio_client.dart';
 import '../../../config/api_config.dart';
+import '../../models/tarea.dart';
 
 class TaskRemoteDataSource {
   final Dio _dio = DioClient.instance.dio;
 
-  Future<List<Map<String, dynamic>>> getTasks() async {
+  /// Obtiene el listado de tareas desde el backend.
+  Future<List<Tarea>> getTasks() async {
     final response = await _dio.get(
       ApiConfig.tasksEndpoint,
     );
@@ -16,7 +18,9 @@ class TaskRemoteDataSource {
     if (data is List) {
       return data
           .map(
-            (item) => Map<String, dynamic>.from(item),
+            (item) => Tarea.fromJson(
+              Map<String, dynamic>.from(item),
+            ),
           )
           .toList();
     }
@@ -25,7 +29,9 @@ class TaskRemoteDataSource {
         data['tareas'] is List) {
       return (data['tareas'] as List)
           .map(
-            (item) => Map<String, dynamic>.from(item),
+            (item) => Tarea.fromJson(
+              Map<String, dynamic>.from(item),
+            ),
           )
           .toList();
     }
@@ -33,7 +39,8 @@ class TaskRemoteDataSource {
     return [];
   }
 
-  Future<Map<String, dynamic>> createTask(
+  /// Crea una tarea en el backend.
+  Future<Tarea> createTask(
     Map<String, dynamic> task,
   ) async {
     final response = await _dio.post(
@@ -41,8 +48,21 @@ class TaskRemoteDataSource {
       data: task,
     );
 
-    return Map<String, dynamic>.from(
-      response.data,
-    );
+    final data =
+        Map<String, dynamic>.from(response.data);
+
+    // El backend devuelve la tarea dentro
+    // de la propiedad "tarea".
+    if (data['tarea'] is Map) {
+      return Tarea.fromJson(
+        Map<String, dynamic>.from(
+          data['tarea'],
+        ),
+      );
+    }
+
+    // Compatibilidad por si el backend
+    // devuelve directamente la tarea.
+    return Tarea.fromJson(data);
   }
 }

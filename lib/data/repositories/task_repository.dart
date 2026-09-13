@@ -1,3 +1,4 @@
+import '../../models/tarea.dart';
 import '../local/task_local_data_source.dart';
 import '../remote/task_remote_data_source.dart';
 
@@ -13,21 +14,51 @@ class TaskRepository {
         localDataSource =
             localDataSource ?? TaskLocalDataSource();
 
-  Future<List<Map<String, dynamic>>> getTasks() async {
+  // ==============================
+  // OBTENER TAREAS
+  // ==============================
+  Future<List<Tarea>> getTasks() async {
     try {
       final remoteTasks =
           await remoteDataSource.getTasks();
 
-      await localDataSource.saveTasks(
-        remoteTasks,
-      );
+      final tasksAsMaps =
+          remoteTasks.map((t) => t.toJson()).toList();
+
+      await localDataSource.saveTasks(tasksAsMaps);
 
       return remoteTasks;
     } catch (_) {
-      return await localDataSource.getTasks();
+      final localMaps =
+          await localDataSource.getTasks();
+
+      return localMaps
+          .map((map) => Tarea.fromJson(map))
+          .toList();
     }
   }
 
+  // ==============================
+  // CREAR TAREA EN EL BACKEND
+  // ==============================
+  Future<Tarea> createTask(
+    Map<String, dynamic> task,
+  ) async {
+    final createdTask =
+        await remoteDataSource.createTask(task);
+
+    // Guardamos también la tarea creada
+    // en la base de datos local.
+    await localDataSource.saveTasks([
+      createdTask.toJson(),
+    ]);
+
+    return createdTask;
+  }
+
+  // ==============================
+  // CREAR TAREA SIN INTERNET
+  // ==============================
   Future<void> createTaskOffline(
     Map<String, dynamic> task,
   ) async {

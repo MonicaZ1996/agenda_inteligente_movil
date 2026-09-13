@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/repositories/auth_repository.dart';
-import 'auth_test_screen.dart';
+import 'tasks_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -54,7 +54,7 @@ class _LoginScreenState extends State<LoginScreen> {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (_) => const AuthTestScreen(),
+          builder: (_) => const TasksScreen(),
         ),
       );
     } catch (e) {
