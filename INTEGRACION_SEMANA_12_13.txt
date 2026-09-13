@@ -1,0 +1,70 @@
+AGENDA INTELIGENTE - INTEGRACION SEMANA 12 + 13
+
+Este proyecto unifica los requisitos de persistencia local/offline de Semana 12 con la integración HTTP/JWT de Semana 13.
+
+FLUJO PRINCIPAL
+1. Inicio de sesión contra POST /api/auth/login.
+2. Tokens guardados con flutter_secure_storage.
+3. La sesión se conserva al cerrar/reabrir la app.
+4. Agenda muestra tareas del backend y las guarda en SQLite.
+5. En modo avión, la agenda usa SQLite e indica que los datos son locales/desactualizados.
+6. Una tarea creada offline se guarda localmente con UUID/client_id y entra en pending_queue.
+7. Al recuperar conexión, SyncService procesa la cola con reintentos 1s/2s/4s y máximo 3 intentos.
+8. El backend usa client_id para evitar duplicados en reintentos.
+9. Si el access token expira, Dio renueva automáticamente el token y reintenta una vez la petición.
+10. Cerrar sesión elimina tokens y toda la base SQLite local.
+
+ARCHIVOS PRINCIPALES
+- lib/config/api_config.dart: URL por ambiente y timeouts.
+- lib/core/network/dio_client.dart: cliente HTTP único, autenticación, refresh y retry GET.
+- lib/core/network/network_error_mapper.dart: mensajes de dominio para fallos de red.
+- lib/services/secure_storage_service.dart: tokens cifrados.
+- lib/services/database_helper.dart: SQLite, esquema, migración v1->v2 y pending_queue.
+- lib/services/sync_service.dart: cola, backoff y máximo de reintentos.
+- lib/data/remote/: fuentes remotas.
+- lib/data/local/: fuente local.
+- lib/data/repositories/: repositorios.
+- lib/screens/tasks_screen.dart: una sola pantalla integrada online/offline.
+- APLICACIONES-MOVILES/server.js: login, refresh, GET/POST tareas, 422 e idempotencia.
+
+ANTES DE EJECUTAR
+Desde la raíz del proyecto Flutter:
+  flutter pub get
+  dart run build_runner build --delete-conflicting-outputs
+  flutter analyze
+
+Backend:
+  cd APLICACIONES-MOVILES
+  npm install
+  node server.js
+
+Aplicación:
+  flutter run --dart-define=API_BASE_URL=http://192.168.100.34:5000
+
+Para otro Wi-Fi, sustituir 192.168.100.34 por la IPv4 actual de la PC.
+
+PRUEBA SEMANA 12
+- Iniciar sesión.
+- Confirmar que aparecen tareas.
+- Cerrar y abrir la app: debe conservar la sesión.
+- Activar modo avión: debe aparecer banner naranja y seguir mostrando tareas locales.
+- Crear una tarea: debe figurar como Pendiente de envío.
+- Desactivar modo avión: debe sincronizarse y pasar a Sincronizada.
+- Cerrar sesión: borra tokens y SQLite y regresa al login.
+
+PRUEBA SEMANA 13
+- Login y listado real del backend.
+- Crear tarea y verla en servidor.
+- Esperar más de 60 segundos y pulsar sincronizar: el backend debe imprimir [REFRESH].
+- Para demostrar 422: intentar iniciar sesión con correo de formato inválido, por ejemplo abc, y una contraseña de 6+ caracteres. La app muestra el error asociado al campo.
+- Activar modo avión para demostrar el fallback local.
+
+ESTRATEGIA DE CONFLICTOS
+- Las creaciones usan client_id UUID como clave idempotente: un reintento no duplica la tarea.
+- Tras sincronizar, prevalece la versión confirmada por el servidor y su updated_at.
+- Sacrificio: ante discrepancias, se prioriza la consistencia del servidor sobre una edición local no confirmada.
+
+DATOS PERSONALES
+- Secure storage: access_token y refresh_token; finalidad: autenticación; duración: hasta cerrar sesión o invalidarse.
+- SQLite: solo campos necesarios de tareas y cola de sincronización; finalidad: operación offline; duración: hasta cerrar sesión.
+- Contraseñas: no se guardan localmente.
